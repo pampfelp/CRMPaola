@@ -224,7 +224,7 @@
   .kanban-col-head .kc-nome{font-family:var(--display);font-size:12px;font-weight:700;color:var(--ink);}
   .kanban-col-head .kc-sub{font-size:11px;color:var(--ink-faint);margin-top:4px;}
   .kanban-col-body{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:9px;}
-  .kanban-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 13px;cursor:grab;transition:box-shadow .12s,border-color .12s,opacity .12s;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
+  .kanban-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 13px;cursor:grab;transition:box-shadow .12s,border-color .12s,opacity .12s;touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
   .kanban-card:active{cursor:grabbing;}
   .kanban-card.dragging{opacity:.35;}
   .kanban-card-ghost{position:fixed;top:0;left:0;pointer-events:none;z-index:400;opacity:.94;box-shadow:0 14px 32px rgba(44,31,61,.32);transform:rotate(1deg);}
@@ -1256,6 +1256,9 @@
   /* Drag-and-drop por Pointer Events (funciona com mouse, touch e caneta —
      o HTML5 draggable nativo não dispara em toque no iOS/Android). */
   var arrastarEstado = null;
+  var esperaLongPress = null;
+  var LONG_PRESS_MS = 380;
+  var LONG_PRESS_TOLERANCIA = 10;
   var dragDropGlobalPronto = false;
   var ultimoDragTerminouEm = 0;
 
@@ -1315,12 +1318,50 @@
     if (!autoScrollRAF) autoScrollRAF = requestAnimationFrame(passoAutoScroll);
   }
 
+  function cancelarEsperaLongPress(){
+    if (esperaLongPress){
+      clearTimeout(esperaLongPress.timer);
+      esperaLongPress = null;
+    }
+  }
+
+  function iniciarArrasteCard(card, id, pointerId, clientX, clientY, offsetX, offsetY, width){
+    arrastarEstado = {
+      card: card, id: id, pointerId: pointerId,
+      startX: clientX, startY: clientY,
+      offsetX: offsetX, offsetY: offsetY,
+      width: width, dragging: true, ghost: null,
+      lastClientX: clientX, lastClientY: clientY
+    };
+    var estado = arrastarEstado;
+    estado.card.classList.add('dragging');
+    try { estado.card.setPointerCapture(pointerId); } catch(err){}
+    estado.ghost = estado.card.cloneNode(true);
+    estado.ghost.classList.add('kanban-card-ghost');
+    estado.ghost.style.width = estado.width + 'px';
+    document.body.appendChild(estado.ghost);
+    estado.ghost.style.left = (clientX - offsetX) + 'px';
+    estado.ghost.style.top = (clientY - offsetY) + 'px';
+    destacarColunaSobPonto(clientX, clientY);
+  }
+
   function onDragPointerMove(e){
+    /* Enquanto ainda está no período de "pressionar e segurar" (toque), qualquer
+       movimento é intenção de rolar a coluna, não de arrastar — cancela a espera
+       e deixa o navegador rolar normalmente. */
+    if (esperaLongPress && esperaLongPress.pointerId === e.pointerId){
+      var dxE = e.clientX - esperaLongPress.startX;
+      var dyE = e.clientY - esperaLongPress.startY;
+      if (Math.abs(dxE) > LONG_PRESS_TOLERANCIA || Math.abs(dyE) > LONG_PRESS_TOLERANCIA) cancelarEsperaLongPress();
+      return;
+    }
     var estado = arrastarEstado;
     if (!estado || estado.pointerId !== e.pointerId) return;
-    var dx = e.clientX - estado.startX;
-    var dy = e.clientY - estado.startY;
     if (!estado.dragging){
+      /* Só acontece com mouse: sem ambiguidade com rolagem, arrasta ao mover
+         sem precisar segurar (o toque já vira arraste antes de chegar aqui). */
+      var dx = e.clientX - estado.startX;
+      var dy = e.clientY - estado.startY;
       if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
       estado.dragging = true;
       estado.card.classList.add('dragging');
@@ -1340,6 +1381,7 @@
   }
 
   function onDragPointerUp(e){
+    if (esperaLongPress && esperaLongPress.pointerId === e.pointerId) cancelarEsperaLongPress();
     var estado = arrastarEstado;
     if (!estado || estado.pointerId !== e.pointerId) return;
     arrastarEstado = null;
@@ -1360,17 +1402,30 @@
       card.addEventListener('pointerdown', function(e){
         if (e.pointerType === 'mouse' && e.button !== 0) return;
         var rect = card.getBoundingClientRect();
-        arrastarEstado = {
-          card: card,
-          id: card.dataset.id,
-          pointerId: e.pointerId,
-          startX: e.clientX,
-          startY: e.clientY,
-          offsetX: e.clientX - rect.left,
-          offsetY: e.clientY - rect.top,
-          width: rect.width,
-          dragging: false,
-          ghost: null
+        var id = card.dataset.id;
+        var offsetX = e.clientX - rect.left;
+        var offsetY = e.clientY - rect.top;
+
+        if (e.pointerType === 'mouse'){
+          arrastarEstado = {
+            card: card, id: id, pointerId: e.pointerId,
+            startX: e.clientX, startY: e.clientY,
+            offsetX: offsetX, offsetY: offsetY,
+            width: rect.width, dragging: false, ghost: null
+          };
+          return;
+        }
+
+        /* Toque/caneta: só inicia o arraste depois de pressionar e segurar —
+           assim um toque rápido continua rolando a coluna verticalmente. */
+        cancelarEsperaLongPress();
+        var pointerId = e.pointerId, clientX = e.clientX, clientY = e.clientY;
+        esperaLongPress = {
+          pointerId: pointerId, startX: clientX, startY: clientY,
+          timer: setTimeout(function(){
+            esperaLongPress = null;
+            iniciarArrasteCard(card, id, pointerId, clientX, clientY, offsetX, offsetY, rect.width);
+          }, LONG_PRESS_MS)
         };
       });
     });
