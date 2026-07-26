@@ -467,7 +467,7 @@
     <div class="campo"><label>Nome completo *</label><input type="text" id="cli-nome"></div>
     <div class="grid-2">
       <div class="campo"><label>CPF / CNPJ</label><input type="text" id="cli-doc"></div>
-      <div class="campo"><label>Telefone / WhatsApp *</label><input type="text" id="cli-telefone" placeholder="(11) 90000-0000"></div>
+      <div class="campo"><label>Telefone / WhatsApp</label><input type="text" id="cli-telefone" placeholder="(11) 90000-0000 (opcional)"></div>
     </div>
     <div class="campo"><label>E-mail</label><input type="email" id="cli-email"></div>
     <div class="grid-2">
@@ -1032,7 +1032,7 @@
     var nome = document.getElementById('cli-nome').value.trim();
     var telefone = document.getElementById('cli-telefone').value.trim();
     var msg = document.getElementById('modal-cliente-msg');
-    if (!nome || !telefone){ msg.className = 'msg error'; msg.textContent = 'Nome e telefone são obrigatórios.'; return; }
+    if (!nome){ msg.className = 'msg error'; msg.textContent = 'Nome é obrigatório.'; return; }
 
     var idExistente = document.getElementById('cli-id').value;
     var original = idExistente ? (STATE.clientes.find(function(c){ return c.ID === idExistente; }) || {}) : {};
