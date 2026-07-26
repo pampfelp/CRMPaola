@@ -1159,9 +1159,16 @@
       var d = new Date(hoje); d.setDate(d.getDate()-i);
       dias.push({ data: d, chave: d.toDateString(), count: 0 });
     }
+    /* Cada negociação pode ter vários registros de log (uma por mudança de etapa);
+       para o gráfico, considera-se só o mais recente de cada negociação, não a soma de tudo. */
+    var ultimoPorNegociacao = {};
     STATE.logFunil.forEach(function(log){
-      if (!log.Data) return;
-      var dLog = new Date(log.Data);
+      if (!log.Data || !log.NegociacaoID) return;
+      var atual = ultimoPorNegociacao[log.NegociacaoID];
+      if (!atual || new Date(log.Data) > new Date(atual.Data)) ultimoPorNegociacao[log.NegociacaoID] = log;
+    });
+    Object.keys(ultimoPorNegociacao).forEach(function(id){
+      var dLog = new Date(ultimoPorNegociacao[id].Data);
       if (isNaN(dLog.getTime())) return;
       dLog.setHours(0,0,0,0);
       var chave = dLog.toDateString();
@@ -1171,7 +1178,7 @@
 
     var max = Math.max.apply(null, dias.map(function(d){ return d.count; }).concat([1]));
     var total = dias.reduce(function(s,d){ return s + d.count; }, 0);
-    document.getElementById('grafico-sub').textContent = 'Últimos 14 dias · ' + total + ' atividade(s) registradas';
+    document.getElementById('grafico-sub').textContent = 'Últimos 14 dias · ' + total + ' negociação(ões) com atividade';
 
     var largura = 700, alturaPlot = 100, alturaTotal = 130, topoReservado = 22;
     var larguraColuna = largura/14;
@@ -1260,6 +1267,54 @@
     document.addEventListener('pointercancel', onDragPointerUp);
   }
 
+  /* Auto-scroll horizontal do kanban ao arrastar um card perto da borda —
+     assim não é preciso soltar e arrastar de novo para alcançar colunas fora da tela. */
+  var AUTOSCROLL_ZONA = 56;
+  var AUTOSCROLL_VELOCIDADE_MAX = 16;
+  var autoScrollRAF = null;
+  var autoScrollWrap = null, autoScrollDir = 0, autoScrollVel = 0;
+
+  function destacarColunaSobPonto(x, y){
+    var elUnder = document.elementFromPoint(x, y);
+    var col = elUnder ? elUnder.closest('.kanban-col') : null;
+    document.querySelectorAll('.kanban-col.dragover').forEach(function(c){ if (c !== col) c.classList.remove('dragover'); });
+    if (col) col.classList.add('dragover');
+    return col;
+  }
+
+  function pararAutoScroll(){
+    autoScrollDir = 0;
+    if (autoScrollRAF){ cancelAnimationFrame(autoScrollRAF); autoScrollRAF = null; }
+  }
+
+  function passoAutoScroll(){
+    if (!autoScrollDir || !arrastarEstado || !arrastarEstado.dragging){ autoScrollRAF = null; return; }
+    autoScrollWrap.scrollLeft += autoScrollDir * autoScrollVel;
+    destacarColunaSobPonto(arrastarEstado.lastClientX, arrastarEstado.lastClientY);
+    autoScrollRAF = requestAnimationFrame(passoAutoScroll);
+  }
+
+  function atualizarAutoScroll(clientX){
+    var wrap = document.querySelector('.kanban-wrap');
+    if (!wrap){ pararAutoScroll(); return; }
+    var rect = wrap.getBoundingClientRect();
+    var distEsquerda = clientX - rect.left;
+    var distDireita = rect.right - clientX;
+    var dir = 0, vel = 0;
+    if (distEsquerda < AUTOSCROLL_ZONA && wrap.scrollLeft > 0){
+      dir = -1;
+      vel = AUTOSCROLL_VELOCIDADE_MAX * (1 - Math.max(distEsquerda, 0) / AUTOSCROLL_ZONA);
+    } else if (distDireita < AUTOSCROLL_ZONA && wrap.scrollLeft < wrap.scrollWidth - wrap.clientWidth - 1){
+      dir = 1;
+      vel = AUTOSCROLL_VELOCIDADE_MAX * (1 - Math.max(distDireita, 0) / AUTOSCROLL_ZONA);
+    }
+    autoScrollWrap = wrap;
+    autoScrollDir = dir;
+    autoScrollVel = Math.max(vel, 3);
+    if (dir === 0){ pararAutoScroll(); return; }
+    if (!autoScrollRAF) autoScrollRAF = requestAnimationFrame(passoAutoScroll);
+  }
+
   function onDragPointerMove(e){
     var estado = arrastarEstado;
     if (!estado || estado.pointerId !== e.pointerId) return;
@@ -1276,18 +1331,19 @@
       document.body.appendChild(estado.ghost);
     }
     e.preventDefault();
+    estado.lastClientX = e.clientX;
+    estado.lastClientY = e.clientY;
     estado.ghost.style.left = (e.clientX - estado.offsetX) + 'px';
     estado.ghost.style.top = (e.clientY - estado.offsetY) + 'px';
-    var elUnder = document.elementFromPoint(e.clientX, e.clientY);
-    var col = elUnder ? elUnder.closest('.kanban-col') : null;
-    document.querySelectorAll('.kanban-col.dragover').forEach(function(c){ if (c !== col) c.classList.remove('dragover'); });
-    if (col) col.classList.add('dragover');
+    destacarColunaSobPonto(e.clientX, e.clientY);
+    atualizarAutoScroll(e.clientX);
   }
 
   function onDragPointerUp(e){
     var estado = arrastarEstado;
     if (!estado || estado.pointerId !== e.pointerId) return;
     arrastarEstado = null;
+    pararAutoScroll();
     if (!estado.dragging) return;
     var elUnder = document.elementFromPoint(e.clientX, e.clientY);
     var colFinal = elUnder ? elUnder.closest('.kanban-col') : null;
